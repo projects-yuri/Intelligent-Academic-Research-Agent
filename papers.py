@@ -1,44 +1,32 @@
-"""Biblioteca local de dez artigos verificados no arXiv."""
-
-from functools import lru_cache
-from pathlib import Path
-import json
-import re
-import unicodedata
-
-DATA_FILE = Path(__file__).resolve().parent / "data" / "papers.json"
-
-STOPWORDS = {
-    "de", "da", "do", "dos", "das", "e", "em", "para", "com", "que", "um", "uma", "o", "a",
-    "os", "as", "sobre", "quais", "qual", "por", "mais", "the", "and", "for", "of", "on", "in",
-    "what", "which", "are", "news", "fake", "artigo", "artigos", "estudo", "estudos",
-}
-
-TRANSLATIONS = {
-    "desinformacao": ["misinformation", "disinformation"],
-    "brasileiro": ["brazilian", "portuguese"],
-    "brasil": ["brazilian", "portuguese"],
-    "portugues": ["portuguese", "brazilian"],
-    "imagens": ["image", "multimodal"],
-    "imagem": ["image", "multimodal"],
-    "dados": ["dataset", "benchmark"],
-    "base": ["dataset"],
-    "generalizacao": ["generalization"],
-    "revisao": ["survey"],
-    "comparar": ["comparison"],
-}
-
-
 def _normalize(value: str) -> str:
     value = unicodedata.normalize("NFKD", value.lower())
     value = "".join(c for c in value if not unicodedata.combining(c))
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
+# Reserva incorporada: permite publicar o app mesmo se a pasta data/ não for
+# enviada por engano ao GitHub. A versão em data/papers.json prevalece.
+_FALLBACK_LIBRARY_JSON = r'''[{"id":"1705.00648","title":"Liar, Liar Pants on Fire: A New Benchmark Dataset for Fake News Detection","authors":["William Yang Wang"],"year":2017,"url":"https://arxiv.org/abs/1705.00648","pdf_url":"https://arxiv.org/pdf/1705.00648","topic":"Conjunto de dados e classificação textual","methods":["CNN","texto e metadados","classificação supervisionada"],"datasets":["LIAR"],"keywords":["LIAR","dataset","base de dados","benchmark","classificação","política","NLP","fake news"],"summary_pt":"Apresenta o conjunto LIAR, composto por declarações curtas rotuladas para estudos de verificação e classificação. Explora a combinação de texto e metadados em modelos de aprendizado de máquina."},{"id":"1708.01967","title":"Fake News Detection on Social Media: A Data Mining Perspective","authors":["Kai Shu","Amy Sliva","Suhang Wang","Jiliang Tang","Huan Liu"],"year":2017,"url":"https://arxiv.org/abs/1708.01967","pdf_url":"https://arxiv.org/pdf/1708.01967","topic":"Revisão de métodos e desafios","methods":["revisão de literatura","mineração de dados","análise de redes sociais"],"datasets":[],"keywords":["survey","revisão","introdução","redes sociais","social media","fake news","algoritmos","mineração de dados"],"summary_pt":"Reúne conceitos, desafios, conjuntos de dados e abordagens de mineração de dados usadas na detecção de notícias falsas em redes sociais. É uma boa leitura introdutória."},{"id":"1809.01286","title":"FakeNewsNet: A Data Repository with News Content, Social Context and Spatiotemporal Information for Studying Fake News on Social Media","authors":["Kai Shu","Deepak Mahudeswaran","Suhang Wang","Dongwon Lee","Huan Liu"],"year":2018,"url":"https://arxiv.org/abs/1809.01286","pdf_url":"https://arxiv.org/pdf/1809.01286","topic":"Conjunto de dados com contexto social","methods":["coleta de dados","análise exploratória","contexto social"],"datasets":["FakeNewsNet"],"keywords":["FakeNewsNet","dataset","base de dados","redes sociais","social media","propagação","contexto"],"summary_pt":"Descreve um repositório de dados para estudar notícias falsas combinando conteúdo das notícias, interações sociais e informações sobre a propagação."},{"id":"1911.03854","title":"r/Fakeddit: A New Multimodal Benchmark Dataset for Fine-grained Fake News Detection","authors":["Kai Nakamura","Sharon Levy","William Yang Wang"],"year":2019,"url":"https://arxiv.org/abs/1911.03854","pdf_url":"https://arxiv.org/pdf/1911.03854","topic":"Dataset multimodal (texto e imagem)","methods":["modelos multimodais","classificação de múltiplas classes"],"datasets":["Fakeddit"],"keywords":["Fakeddit","dataset","multimodal","imagem","texto","reddit","benchmark"],"summary_pt":"Apresenta o Fakeddit, um grande conjunto de dados com conteúdo textual e visual para diferentes categorias de informação enganosa. Compara abordagens multimodais."},{"id":"1703.06959","title":"CSI: A Hybrid Deep Model for Fake News Detection","authors":["Natali Ruchansky","Sungyong Seo","Yan Liu"],"year":2017,"url":"https://arxiv.org/abs/1703.06959","pdf_url":"https://arxiv.org/pdf/1703.06959","topic":"Modelo profundo híbrido","methods":["rede neural recorrente","informação social","modelo híbrido"],"datasets":[],"keywords":["CSI","deep learning","redes neurais","RNN","redes sociais","texto","usuários"],"summary_pt":"Propõe um modelo que combina características das notícias, reações dos usuários e informações de quem as compartilha para auxiliar a classificação."},{"id":"2103.12541","title":"A Survey on Multimodal Disinformation Detection","authors":["Firoj Alam","Stefano Cresci","Tanmoy Chakraborty","Fabrizio Silvestri","Dimiter Dimitrov","Giovanni Da San Martino","Shaden Shaar","Hamed Firooz","Preslav Nakov"],"year":2021,"url":"https://arxiv.org/abs/2103.12541","pdf_url":"https://arxiv.org/pdf/2103.12541","topic":"Revisão sobre desinformação multimodal","methods":["revisão de literatura","texto","imagem","vídeo","áudio"],"datasets":[],"keywords":["survey","revisão","multimodal","imagem","vídeo","áudio","texto","desinformação"],"summary_pt":"Organiza pesquisas que utilizam diferentes tipos de mídia, como texto, imagem, som e vídeo, na identificação de desinformação. Discute limitações e caminhos de pesquisa."},{"id":"2112.04831","title":"Multimodal Fake News Detection","authors":["Santiago Alonso-Bartolome","Isabel Segura-Bedmar"],"year":2021,"url":"https://arxiv.org/abs/2112.04831","pdf_url":"https://arxiv.org/pdf/2112.04831","topic":"Experimentos com texto e imagem","methods":["CNN","BERT","modelos multimodais"],"datasets":["Fakeddit"],"keywords":["multimodal","BERT","CNN","Fakeddit","imagem","texto","classificação"],"summary_pt":"Compara classificadores baseados só em texto com modelos que combinam texto e imagem, usando categorias do conjunto Fakeddit."},{"id":"2309.11052","title":"fakenewsbr: A Fake News Detection Platform for Brazilian Portuguese","authors":["Luiz Giordani","Gilsiley Darú","Rhenan Queiroz","Vitor Buzinaro","Davi Keglevich Neiva","Daniel Camilo Fuentes Guzmán","Marcos Jardel Henriques","Oilson Alberto Gonzatto Junior","Francisco Louzada"],"year":2023,"url":"https://arxiv.org/abs/2309.11052","pdf_url":"https://arxiv.org/pdf/2309.11052","topic":"Detecção em português brasileiro","methods":["TF-IDF","Word2Vec","regressão logística","SVM","random forest","LightGBM"],"datasets":["notícias em português brasileiro"],"keywords":["Brasil","Português","PT-BR","brasileiro","TF-IDF","Word2Vec","SVM","comparação","notícias"],"summary_pt":"Investiga a classificação de notícias verdadeiras e falsas em português brasileiro com técnicas tradicionais de NLP e aprendizado de máquina; descreve também uma plataforma web."},{"id":"2305.14928","title":"Towards Reliable Misinformation Mitigation: Generalization, Uncertainty, and GPT-4","authors":["Kellin Pelrine","Anne Imouza","Camille Thibault","Meilina Reksoprodjo","Caleb Gupta","Joel Christoph","Jean-François Godbout","Reihaneh Rabbany"],"year":2023,"url":"https://arxiv.org/abs/2305.14928","pdf_url":"https://arxiv.org/pdf/2305.14928","topic":"Generalização e incerteza dos classificadores","methods":["GPT-4","RoBERTa","análise de generalização","estimativa de incerteza"],"datasets":["LIAR-New"],"keywords":["generalização","generalization","incerteza","uncertainty","GPT-4","RoBERTa","robustez","avaliação"],"summary_pt":"Estuda o desempenho de detectores de desinformação fora dos cenários habituais e destaca a importância de generalização, incerteza e limitações das classificações automáticas."},{"id":"2411.12703","title":"Strengthening Fake News Detection: Leveraging SVM and Sophisticated Text Vectorization Techniques. Defying BERT?","authors":["Ahmed Akib Jawad Karim","Kazi Hafiz Md Asad","Aznur Azam"],"year":2024,"url":"https://arxiv.org/abs/2411.12703","pdf_url":"https://arxiv.org/pdf/2411.12703","topic":"Comparação entre métodos clássicos e BERT","methods":["SVM","TF-IDF","Word2Vec","Bag of Words","BERT"],"datasets":[],"keywords":["SVM","BERT","TF-IDF","Word2Vec","BoW","machine learning","comparação","vetorização"],"summary_pt":"Compara combinações de vetorização textual e SVM com uma abordagem baseada em BERT, discutindo desempenho e custo computacional nos experimentos do artigo."}]'''
+
+
 @lru_cache(maxsize=1)
 def get_library() -> list[dict]:
-    with DATA_FILE.open("r", encoding="utf-8") as file:
-        return json.load(file)
+    """Carrega a biblioteca externa ou a coleção de reserva embutida."""
+    try:
+        with DATA_FILE.open("r", encoding="utf-8") as file:
+            records = json.load(file)
+    except FileNotFoundError:
+        warnings.warn(
+            f"Biblioteca em {DATA_FILE} não encontrada. "
+            "Usando dez artigos de reserva incorporados em papers.py. "
+            "Envie data/papers.json ao repositório para manter os dados editáveis.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        records = json.loads(_FALLBACK_LIBRARY_JSON)
+    if not isinstance(records, list) or not records:
+        raise ValueError("A biblioteca de artigos deve ser uma lista JSON não vazia.")
+    return records
 
 
 def get_local_paper(reference: str) -> dict | None:
