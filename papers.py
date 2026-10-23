@@ -3,6 +3,7 @@ def _normalize(value: str) -> str:
     value = "".join(c for c in value if not unicodedata.combining(c))
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
+from functools import lru_cache
 
 # Reserva incorporada: permite publicar o app mesmo se a pasta data/ não for
 # enviada por engano ao GitHub. A versão em data/papers.json prevalece.
