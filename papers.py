@@ -1,3 +1,35 @@
+"""Biblioteca local de dez artigos verificados no arXiv."""
+
+from functools import lru_cache
+from pathlib import Path
+import json
+import re
+import unicodedata
+import warnings
+
+DATA_FILE = Path(__file__).resolve().parent / "data" / "papers.json"
+
+STOPWORDS = {
+    "de", "da", "do", "dos", "das", "e", "em", "para", "com", "que", "um", "uma", "o", "a",
+    "os", "as", "sobre", "quais", "qual", "por", "mais", "the", "and", "for", "of", "on", "in",
+    "what", "which", "are", "news", "fake", "artigo", "artigos", "estudo", "estudos",
+}
+
+TRANSLATIONS = {
+    "desinformacao": ["misinformation", "disinformation"],
+    "brasileiro": ["brazilian", "portuguese"],
+    "brasil": ["brazilian", "portuguese"],
+    "portugues": ["portuguese", "brazilian"],
+    "imagens": ["image", "multimodal"],
+    "imagem": ["image", "multimodal"],
+    "dados": ["dataset", "benchmark"],
+    "base": ["dataset"],
+    "generalizacao": ["generalization"],
+    "revisao": ["survey"],
+    "comparar": ["comparison"],
+}
+
+
 def _normalize(value: str) -> str:
     value = unicodedata.normalize("NFKD", value.lower())
     value = "".join(c for c in value if not unicodedata.combining(c))
