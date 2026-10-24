@@ -74,6 +74,8 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "agent_messages" not in st.session_state:
     st.session_state.agent_messages = []
+if "pending_question" not in st.session_state:
+    st.session_state.pending_question = None
 
 papers = get_library()
 
@@ -99,6 +101,7 @@ with st.sidebar:
     if st.button("Limpar conversa", use_container_width=True):
         st.session_state.history = []
         st.session_state.agent_messages = []
+        st.session_state.pending_question = None
         st.rerun()
 
 st.markdown("""
@@ -140,61 +143,83 @@ def content_as_text(value) -> str:
 
 with chat_tab:
     st.subheader("Seu assistente de pesquisa")
-    st.caption("Experimente uma das perguntas abaixo ou escreva a sua. O agente escolhe quais ferramentas usar.")
+    st.caption("Escreva na barra fixa no rodapé ou escolha uma das sugestões. A barra continua disponível após a resposta.")
+
     prompts = [
         "Encontre artigos introdutórios sobre detecção de fake news.",
         "Compare os estudos 2309.11052 e 2411.12703 sobre métodos de classificação.",
         "Quais artigos usam imagens além de texto? Compare dois deles.",
     ]
-    sample = None
     cols = st.columns(3)
     for i, prompt in enumerate(prompts):
         with cols[i]:
-            if st.button(["Pesquisa inicial", "Comparar metodologias", "Texto + imagem"][i], key=f"p{i}", use_container_width=True):
-                sample = prompt
+            if st.button(["Pesquisa inicial", "Comparar metodologias", "Texto + imagem"][i],
+                         key=f"p{i}", use_container_width=True):
+                st.session_state.pending_question = prompt
+                st.rerun()
+
+    # A pergunta é processada ANTES da exibição do histórico. Isso impede que
+    # uma resposta longa apareça abaixo da barra de entrada.
+    question = st.session_state.pending_question
+    if question:
+        st.session_state.pending_question = None  # Evita executar novamente em reruns.
+        st.session_state.history.append({"role": "user", "content": question})
+        if not has_key:
+            reply = (
+                "Para ativar o agente, configure `LLM_API_KEY` em **Settings → Secrets** "
+                "do Streamlit Cloud e `LLM_PROVIDER = \"openrouter\"` se usar OpenRouter. "
+                "A biblioteca local continua disponível sem essa chave."
+            )
+            trace = []
+        else:
+            with st.spinner("Pesquisando e consultando as ferramentas do agente..."):
+                try:
+                    previous = st.session_state.agent_messages
+                    graph = make_graph()
+                    response = graph.invoke(
+                        {"messages": previous + [HumanMessage(content=question)]},
+                        config={"recursion_limit": 24, "run_name": "MossScholar-ReAct"},
+                    )
+                    current = response["messages"]
+                    new_messages = current[len(previous) + 1:]
+                    reply = next(
+                        (content_as_text(msg.content) for msg in reversed(current)
+                         if isinstance(msg, AIMessage) and not msg.tool_calls),
+                        "O modelo terminou sem produzir uma resposta final. Tente novamente.",
+                    )
+                    trace = [
+                        {"name": m.name or "ferramenta", "result": content_as_text(m.content)}
+                        for m in new_messages if isinstance(m, ToolMessage)
+                    ]
+                    st.session_state.agent_messages = current
+                except Exception as exc:
+                    # Não exibir o conteúdo bruto da exceção: respostas de APIs
+                    # podem conter detalhes internos ou segredos de configuração.
+                    category = type(exc).__name__
+                    message = str(exc).lower()
+                    if "401" in message or "invalid api key" in message:
+                        tip = "Confira a API Key em Settings → Secrets."
+                    elif "429" in message or "rate limit" in message:
+                        tip = "O OpenRouter atingiu o limite de requisições. Tente mais tarde."
+                    elif "tool" in message and ("support" in message or "unsupported" in message):
+                        tip = "O modelo selecionado não aceita chamadas de ferramentas. Selecione outro modelo com tool calling."
+                    elif "recursion" in message:
+                        tip = "O agente atingiu seu limite de etapas. Faça uma pergunta mais específica."
+                    else:
+                        tip = "Confira o modelo no OpenRouter e os registros do app no Streamlit Cloud."
+                    reply = f"⚠️ Não foi possível concluir esta pesquisa ({category}). {tip}"
+                    trace = []
+
+        st.session_state.history.append({"role": "assistant", "content": reply, "trace": trace})
 
     for item in st.session_state.history:
         with st.chat_message(item["role"], avatar="🌿" if item["role"] == "assistant" else "👤"):
             st.markdown(item["content"])
             if item["role"] == "assistant":
-                show_trace(item.get("trace", []))
-
-    typed = st.chat_input("Pergunte sobre artigos, datasets ou metodologias...")
-    question = sample or typed
-    if question:
-        st.session_state.history.append({"role": "user", "content": question})
-        with st.chat_message("user", avatar="👤"):
-            st.markdown(question)
-        if not has_key:
-            reply = "Para ativar o agente, configure `LLM_API_KEY` em `.env` (localmente) ou em **Settings → Secrets** no Streamlit Community Cloud. A biblioteca continua disponível sem essa chave."
-            trace = []
-            with st.chat_message("assistant", avatar="🌿"):
-                st.markdown(reply)
-        else:
-            with st.chat_message("assistant", avatar="🌿"):
-                with st.spinner("Consultando as ferramentas e preparando a resposta..."):
-                    try:
-                        previous = st.session_state.agent_messages
-                        graph = make_graph()
-                        response = graph.invoke(
-                            {"messages": previous + [HumanMessage(content=question)]},
-                            config={"recursion_limit": 16, "run_name": "MossScholar-ReAct"},
-                        )
-                        current = response["messages"]
-                        new_messages = current[len(previous) + 1:]
-                        reply = next((content_as_text(msg.content) for msg in reversed(current)
-                                      if isinstance(msg, AIMessage) and not msg.tool_calls),
-                                     "Não foi possível gerar uma resposta final.")
-                        trace = [{"name": m.name or "ferramenta", "result": content_as_text(m.content)}
-                                 for m in new_messages if isinstance(m, ToolMessage)]
-                        # Preserva a sequência completa de mensagens, inclusive chamadas e retornos de ferramentas.
-                        st.session_state.agent_messages = current
-                    except Exception as exc:
-                        reply = f"Não foi possível concluir a consulta. Verifique suas credenciais, o modelo com suporte a ferramentas e a conexão. Detalhe técnico: `{type(exc).__name__}: {exc}`"
-                        trace = []
-                st.markdown(reply)
+                trace = item.get("trace", [])
                 show_trace(trace)
-        st.session_state.history.append({"role": "assistant", "content": reply, "trace": trace})
+                if trace == [] and "⚠️" not in item["content"] and "Para ativar" not in item["content"]:
+                    st.caption("Este modelo respondeu sem executar ferramentas. Para consultas verificadas, escolha um modelo com suporte a tool calling.")
 
 with library_tab:
     st.subheader("Biblioteca de artigos")
@@ -248,3 +273,9 @@ with about_tab:
 
 st.divider()
 st.markdown('<div class="tiny">Moss Scholar · Streamlit × LangGraph × LangSmith · Identidade: Black #000000 + Moss Green #8A9A5B</div>', unsafe_allow_html=True)
+
+# Entrada de chat FIXA (no corpo principal, não dentro de st.tabs()).
+submitted = st.chat_input("Pesquise artigos ou compare estudos...", key="moss_fixed_chat")
+if submitted and submitted.strip():
+    st.session_state.pending_question = submitted.strip()
+    st.rerun()
