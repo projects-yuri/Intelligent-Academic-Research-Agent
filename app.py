@@ -12,9 +12,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from papers import get_library
-from agent import make_graph
-
+# Configurações devem ser aplicadas ANTES de importar os módulos do agente.
+# Isso evita que modelos sejam inicializados com a chave ou endpoint errados.
 st.set_page_config(
     page_title="Moss Scholar | Academic Intelligence",
     page_icon="🌿",
@@ -23,17 +22,98 @@ st.set_page_config(
 )
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+CONFIG_KEYS = (
+    "LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "OPENAI_BASE_URL",
+    "OPENALEX_API_KEY", "LANGSMITH_API_KEY", "LANGSMITH_TRACING",
+    "LANGSMITH_PROJECT",
+)
+
+# Usar as Secrets do Streamlit Cloud com prioridade sobre o .env local.
+# Ausência de secrets não deve impedir execução local.
+secrets_status = "ok"
 try:
-    for key in (
-        "LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY", "OPENAI_API_KEY",
-        "OPENROUTER_API_KEY", "OPENALEX_API_KEY", "LANGSMITH_API_KEY",
-        "LANGSMITH_TRACING", "LANGSMITH_PROJECT",
-    ):
-        if key in st.secrets and st.secrets[key]:
-            os.environ[key] = str(st.secrets[key])
+    for config_key in CONFIG_KEYS:
+        secret = st.secrets.get(config_key)
+        if secret is not None and str(secret).strip():
+            os.environ[config_key] = str(secret).strip()
+except FileNotFoundError:
+    secrets_status = "not_found"
 except Exception:
-    # The local .env file is sufficient when Streamlit secrets are unavailable.
-    pass
+    # Não mostrar exceções brutas, que podem conter conteúdo sensível.
+    secrets_status = "unreadable"
+
+
+def usable_key(value: str | None) -> bool:
+    if not value:
+        return False
+    candidate = value.strip()
+    if not candidate:
+        return False
+    placeholders = ("COLE_", "COLOQUE_", "YOUR_", "SUA_", "SK-OR-V1-EXEMPLO")
+    return not candidate.upper().startswith(placeholders)
+
+
+raw_provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+shared_key = os.getenv("LLM_API_KEY", "").strip()
+router_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+# Reconhecer chaves sk-or-v1 e situações onde só OPENROUTER_API_KEY
+# foi configurada; evita encaminhar credenciais do OpenRouter à OpenAI.
+looks_like_router_key = shared_key.startswith("sk-or-") or openai_key.startswith("sk-or-")
+router_only = usable_key(router_key) and not usable_key(shared_key) and not usable_key(openai_key)
+provider_adjusted = False
+if raw_provider not in ("openai", "openrouter"):
+    provider = "openrouter" if (looks_like_router_key or router_only or usable_key(router_key)) else "openai"
+elif raw_provider == "openai" and (looks_like_router_key or router_only):
+    provider = "openrouter"
+    provider_adjusted = True
+else:
+    provider = raw_provider
+
+api_source = "não encontrada"
+if provider == "openrouter":
+    for name, value in (("OPENROUTER_API_KEY", router_key), ("LLM_API_KEY", shared_key), ("OPENAI_API_KEY", openai_key)):
+        if usable_key(value):
+            selected_key = value
+            api_source = name
+            break
+    else:
+        selected_key = ""
+    if selected_key:
+        os.environ["LLM_API_KEY"] = selected_key
+        os.environ["OPENROUTER_API_KEY"] = selected_key
+        # Compatibilidade com agentes que criam ChatOpenAI sem api_key explícita.
+        os.environ["OPENAI_API_KEY"] = selected_key
+    base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+    os.environ["OPENROUTER_BASE_URL"] = base_url
+    os.environ["OPENAI_BASE_URL"] = base_url
+    if not os.getenv("LLM_MODEL", "").strip():
+        os.environ["LLM_MODEL"] = "openrouter/free"
+else:
+    selected_key = shared_key if usable_key(shared_key) else (openai_key if usable_key(openai_key) else "")
+    api_source = "LLM_API_KEY" if usable_key(shared_key) else ("OPENAI_API_KEY" if usable_key(openai_key) else "não encontrada")
+    if selected_key:
+        os.environ["LLM_API_KEY"] = selected_key
+        os.environ["OPENAI_API_KEY"] = selected_key
+    # Se o provedor é OpenAI, não conservar endpoint OpenRouter de sessões anteriores.
+    if os.getenv("OPENAI_BASE_URL", "").startswith("https://openrouter.ai/"):
+        os.environ.pop("OPENAI_BASE_URL", None)
+    if not os.getenv("LLM_MODEL", "").strip():
+        os.environ["LLM_MODEL"] = "gpt-4o-mini"
+
+os.environ["LLM_PROVIDER"] = provider
+
+# A importação tardia do agente é proposital: ele só será inicializado
+# quando já tiver acesso aos Secrets e à configuração normalizada.
+from papers import get_library
+
+
+def make_configured_graph():
+    from agent import make_graph
+    return make_graph()
 
 LANGUAGES = {"pt": "🇧🇷 Português", "en": "🇺🇸 English", "es": "🇪🇸 Español"}
 
@@ -43,7 +123,7 @@ I18N = {
         "workspace": "ESPAÇO DE PESQUISA", "side_nav": "AMBIENTE",
         "nav_assistant": "Agente de pesquisa", "nav_library": "Biblioteca de artigos",
         "nav_about": "Arquitetura e métodos", "side_engine": "SISTEMA",
-        "model": "Provedor de IA", "configured": "Modelo configurado",
+        "model": "Provedor de IA", "configured": "Chave encontrada (ainda não validada)",
         "not_configured": "Configure a chave do modelo", "openalex_yes": "OpenAlex configurado",
         "openalex_no": "OpenAlex: chave opcional não configurada",
         "langsmith_yes": "Rastreamento LangSmith ativo", "langsmith_no": "LangSmith não ativado",
@@ -103,7 +183,7 @@ I18N = {
         "workspace": "RESEARCH WORKSPACE", "side_nav": "WORKSPACE",
         "nav_assistant": "Research agent", "nav_library": "Paper library",
         "nav_about": "Architecture & methods", "side_engine": "SYSTEM",
-        "model": "AI provider", "configured": "Model configured",
+        "model": "AI provider", "configured": "API key found (not yet validated)",
         "not_configured": "Configure your model API key", "openalex_yes": "OpenAlex configured",
         "openalex_no": "OpenAlex: optional key not configured",
         "langsmith_yes": "LangSmith tracing enabled", "langsmith_no": "LangSmith not enabled",
@@ -163,7 +243,7 @@ I18N = {
         "workspace": "ESPACIO DE INVESTIGACIÓN", "side_nav": "ENTORNO",
         "nav_assistant": "Agente de investigación", "nav_library": "Biblioteca de artículos",
         "nav_about": "Arquitectura y métodos", "side_engine": "SISTEMA",
-        "model": "Proveedor de IA", "configured": "Modelo configurado",
+        "model": "Proveedor de IA", "configured": "Clave encontrada (todavía no validada)",
         "not_configured": "Configura la clave del modelo", "openalex_yes": "OpenAlex configurado",
         "openalex_no": "OpenAlex: clave opcional no configurada",
         "langsmith_yes": "Seguimiento LangSmith activo", "langsmith_no": "LangSmith no activado",
@@ -258,6 +338,13 @@ a { color:#b8ecc2; }
 .status-dot {display:inline-block;width:7px;height:7px;border-radius:50%;background:#8de5ad;margin-right:8px;box-shadow:0 0 11px #76e2a8aa;}
 .status-dot.off { background:#d2ae7d;box-shadow:none; }
 .side-footer {color:#657d71;font:500 9px var(--mono);line-height:1.8;letter-spacing:.1em;margin-top:22px;}
+/* Persistent language selector, visible even with collapsed sidebar */
+.moss-main-brand {padding:17px 0 9px;color:#d9f7df;font:700 15px 'Space Grotesk',sans-serif;letter-spacing:.09em;}
+.moss-main-brand span {color:#83aa92;font:500 10px var(--mono);letter-spacing:.09em;}
+[data-testid="stMain"] [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+  background:#14231b; border:1px solid #4b6a56; border-radius:11px; color:#eff8f1;
+}
+[data-testid="stMain"] [data-testid="stSelectbox"] label {color:#bdd8c5;font:600 12px 'DM Sans',sans-serif;}
 /* Top shell */
 .topline {display:flex;justify-content:space-between;align-items:center;gap:10px;padding:0 0 22px;margin-bottom:28px;border-bottom:1px solid #24332c;flex-wrap:wrap;}
 .topline-left {font:600 10px var(--mono); color:#9aafa3; letter-spacing:.16em;}
@@ -351,29 +438,36 @@ if "ui_lang" not in st.session_state:
     st.session_state.ui_lang = "pt"
 
 papers = get_library()
-provider = os.getenv("LLM_PROVIDER", "openai").upper()
+provider_label = provider.upper()
 model_name = os.getenv("LLM_MODEL", "")
-key_value = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
-has_key = bool(key_value and not key_value.upper().startswith(("COLOQUE_", "COLE_")))
-openalex_ready = bool(os.getenv("OPENALEX_API_KEY"))
-langsmith_ready = bool(os.getenv("LANGSMITH_API_KEY") and os.getenv("LANGSMITH_TRACING", "").lower() == "true")
+has_key = usable_key(selected_key)
+openalex_ready = usable_key(os.getenv("OPENALEX_API_KEY"))
+langsmith_ready = bool(usable_key(os.getenv("LANGSMITH_API_KEY")) and os.getenv("LANGSMITH_TRACING", "").lower() == "true")
 
-with st.sidebar:
-    st.markdown('''<div class="moss-brand"><div class="moss-mark">✳</div><div class="moss-wordmark">moss scholar<small>RESEARCH INTELLIGENCE</small></div></div>''', unsafe_allow_html=True)
+# O seletor fica sempre no conteúdo principal, inclusive com a sidebar fechada.
+# Não depender da posição da sidebar, que o Streamlit pode recolher no celular.
+header_left, header_right = st.columns([3, 1])
+with header_left:
+    st.markdown('<div class="moss-main-brand">✳ &nbsp; MOSS SCHOLAR <span>/ RESEARCH INTELLIGENCE</span></div>', unsafe_allow_html=True)
+with header_right:
     st.selectbox(
-        I18N[st.session_state.ui_lang]["language"],
+        "🌐 Idioma / Language",
         options=list(LANGUAGES),
         format_func=lambda value: LANGUAGES[value],
         key="ui_lang",
     )
-    lang = st.session_state.ui_lang
-    t = I18N[lang]
+lang = st.session_state.ui_lang
+t = I18N[lang]
+
+with st.sidebar:
+    st.markdown('''<div class="moss-brand"><div class="moss-mark">✳</div><div class="moss-wordmark">moss scholar<small>RESEARCH INTELLIGENCE</small></div></div>''', unsafe_allow_html=True)
+    st.caption(f'🌐 {t["language"]}: {LANGUAGES[lang]}')
     st.markdown(f'''<div class="side-kicker">{html.escape(t["side_nav"])}</div>
     <div class="side-link"><b>✦</b>{html.escape(t["nav_assistant"])}</div>
     <div class="side-link"><b>▦</b>{html.escape(t["nav_library"])}</div>
     <div class="side-link"><b>◇</b>{html.escape(t["nav_about"])}</div>''', unsafe_allow_html=True)
     st.markdown(f'<div class="side-kicker">{html.escape(t["side_engine"])}</div>', unsafe_allow_html=True)
-    model_html = html.escape((model_name or provider)[:58])
+    model_html = html.escape((model_name or provider_label)[:58])
     st.markdown(f'''<div class="status-card">
       <div class="status-top">{html.escape(t["model"]).upper()}</div>
       <div class="status-model">{model_html}</div>
@@ -381,6 +475,13 @@ with st.sidebar:
       <div class="status-row"><i class="status-dot {"" if openalex_ready else "off"}"></i>{html.escape(t["openalex_yes"] if openalex_ready else t["openalex_no"])}</div>
       <div class="status-row"><i class="status-dot {"" if langsmith_ready else "off"}"></i>{html.escape(t["langsmith_yes"] if langsmith_ready else t["langsmith_no"])}</div>
     </div>''', unsafe_allow_html=True)
+    # Mostrar só informações de configuração não sensíveis.
+    st.caption(f"Provider: {provider_label} · Modelo: {model_name}")
+    st.caption(f"Chave: {api_source} · Endpoint: {'openrouter.ai' if provider == 'openrouter' else 'api.openai.com'}")
+    if provider_adjusted:
+        st.warning({"pt": "Uma chave OpenRouter foi detectada; o provedor foi ajustado para OpenRouter.", "en": "An OpenRouter key was detected; the provider was set to OpenRouter.", "es": "Se detectó una clave OpenRouter; el proveedor se cambió a OpenRouter."}[lang])
+    if secrets_status == "unreadable":
+        st.error({"pt": "Não foi possível ler Streamlit Secrets; revise a sintaxe TOML.", "en": "Could not read Streamlit Secrets; check TOML syntax.", "es": "No se pudieron leer los Secrets; revisa la sintaxis TOML."}[lang])
     if st.button(f'↻  {t["reset"]}', use_container_width=True, key="reset_session"):
         st.session_state.history = []
         st.session_state.agent_messages = []
@@ -478,7 +579,7 @@ with research_tab:
             with st.spinner(t["working"]):
                 try:
                     previous = st.session_state.agent_messages
-                    graph = make_graph()
+                    graph = make_configured_graph()
                     response = graph.invoke(
                         {"messages": previous + [HumanMessage(content=question)]},
                         config={"recursion_limit": 24, "run_name": "MossScholar-ReAct"},
@@ -500,8 +601,15 @@ with research_tab:
                     # Do not display raw API exceptions; they may contain secrets.
                     category = type(exc).__name__
                     message = str(exc).lower()
-                    if "401" in message or "invalid api key" in message:
-                        tip = t["error_401"]
+                    if "401" in message or "invalid api key" in message or "authenticationerror" in category.lower():
+                        if provider == "openrouter":
+                            tip = {
+                                "pt": "OpenRouter rejeitou a autenticação. Confira se a chave pertence ao OpenRouter, se está ativa e se o modelo e endpoint estão corretos. Provedor e origem da chave aparecem no painel lateral.",
+                                "en": "OpenRouter authentication failed. Check that the key is active and belongs to OpenRouter, and verify the model and endpoint. Provider and key source appear in the sidebar.",
+                                "es": "Falló la autenticación de OpenRouter. Comprueba que la clave esté activa y sea de OpenRouter y verifica el modelo y endpoint. El proveedor y origen de la clave aparecen en el panel lateral.",
+                            }[lang]
+                        else:
+                            tip = t["error_401"]
                     elif "429" in message or "rate limit" in message:
                         tip = t["error_429"]
                     elif "tool" in message and ("support" in message or "unsupported" in message):
